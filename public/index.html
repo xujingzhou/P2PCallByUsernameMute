@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <title>Call By UserName</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
+  <style type="text/css">
+      /* table {
+        width: 90%;
+      } */
+
+      td {
+        vertical-align: top;
+      }
+
+      td:first-child {
+        text-align: right;
+        width: 45%;
+      }
+
+      td:last-child {
+        text-align: left;
+        padding-left: 10px;
+        width: 45%;
+      }
+  </style>
+</head>
+<body>
+
+  <h1> 
+    <p class="no-mobile">
+      屏蔽/打开音视频
+    </p>
+  </h1>
+
+  <section class="make-center">
+    <table>
+        <tr>
+            <td style="padding-bottom: 40px;">
+                <label for="current-username">你的用户名:</label>
+                <input type="text" id="current-username" value="你" autocorrect=off autocapitalize=off size=20>
+            </td>
+
+            <td>
+                <button id="change-your-own-username">加入房间</button>
+                <button id="mute-unmute-video">屏蔽/打开视频</button>
+                <button id="mute-unmute-voice">屏蔽/打开音频</button>
+            </td>
+        </tr>
+
+        <tr>
+            <td>
+                <label for="callee-username">对方用户名:</label>
+                <input type="text" id="callee-username" value="他" autocorrect=off autocapitalize=off size=20>
+            </td>
+            <td>
+                <button id="join-callee-using-his-username" disabled>进行会议</button>
+            </td>
+        </tr>
+
+        <tr>
+            <td colspan="2">
+                <div id="videos-container" style="margin: 20px 0;"></div>
+            </td>
+        </tr>
+    </table>
+
+    
+  </section>
+
+  <script src="/js/RTCPeerConnectionEx.js"></script>
+  <script src="/js/adapter-latest.js"></script>
+  <script src="/js/socketio.js"></script>
+  <script src="/js/getHTMLMediaElement.js"></script>
+  <script src="/js/getStats.js"></script>
+  <link rel="stylesheet" href="/css/getHTMLMediaElement.css" >
+
+<script>
+
+var connection = new RTCPeerConnectionEx();
+
+connection.socketURL = '/';
+connection.socketMessageEvent = 'call-by-username-mute';
+connection.autoCloseEntireSession = true;
+
+connection.session = {
+    audio: true,
+    video: true,
+    broadcast: true // if you remove this, then it becomes MANY-to-MANY
+};
+
+connection.sdpConstraints.mandatory = {
+    OfferToReceiveAudio: true,
+    OfferToReceiveVideo: true
+};
+
+connection.iceServers = [
+            {
+				credential: "123456",
+				username: "admin",
+				urls: [
+				  "stun:18.162.113.79:3478",
+				]
+			},
+			
+/* 			{
+				credential: "123456",
+				username: "user",
+				urls: [
+				  "turn:47.99.146.151:3478",
+				]
+			}, */
+];
+
+connection.videosContainer = document.getElementById('videos-container');
+
+var muteVideo = false, muteVoice = false;
+connection.onstream = function(event) {
+    var existing = document.getElementById(event.streamid);
+    if(existing && existing.parentNode) {
+      existing.parentNode.removeChild(existing);
+    }
+
+    event.mediaElement.removeAttribute('src');
+    event.mediaElement.removeAttribute('srcObject');
+    event.mediaElement.muted = true;
+    event.mediaElement.volume = 0;
+
+    var video = document.createElement('video');
+
+    try {
+        video.setAttributeNode(document.createAttribute('autoplay'));
+        video.setAttributeNode(document.createAttribute('playsinline'));
+    } catch (e) {
+        video.setAttribute('autoplay', true);
+        video.setAttribute('playsinline', true);
+    }
+
+    if(event.type === 'local') {
+      video.volume = 0;
+      try {
+          video.setAttributeNode(document.createAttribute('muted'));
+      } catch (e) {
+          video.setAttribute('muted', true);
+      }
+
+      connection.dontCaptureUserMedia = true;
+
+      // mute/unmute video
+      document.getElementById('mute-unmute-video').onclick = function() {
+          if (!this.muteVideo)
+              this.muteVideo = true;
+          else
+              this.muteVideo = false;
+          
+            if (this.muteVideo) {
+              event.stream.mute({
+                    video: true
+                });
+            } else {
+              event.stream.unmute({
+                    video: true
+                });
+            } 
+            console.log("this.muteVideo: %s", this.muteVideo);
+        };
+
+        // mute/unmute voice
+        document.getElementById('mute-unmute-voice').onclick = function() {
+          if (!this.muteVoice)
+              this.muteVoice = true;
+          else
+              this.muteVoice = false;
+
+            if (this.muteVoice) {
+              event.stream.mute({
+                    audio: true,
+                });
+            } else {
+              event.stream.unmute({
+                    audio: true,
+                });
+            } 
+
+            console.log("this.muteVoice: %s", this.muteVoice);
+        };
+    }
+      
+    video.srcObject = event.stream;
+
+    var width = parseInt(connection.videosContainer.clientWidth / 3) - 20;
+    var mediaElement = getHTMLMediaElement(video, {
+        title: event.userid,
+        buttons: ['full-screen'],
+        width: width,
+        showOnMouseEnter: false
+    });
+
+    connection.videosContainer.appendChild(mediaElement);
+
+    setTimeout(function() {
+        mediaElement.media.play();
+    }, 5000);
+
+    mediaElement.id = event.streamid;
+};
+
+connection.onstreamended = function(event) {
+    var mediaElement = document.getElementById(event.streamid);
+    if (mediaElement) {
+        mediaElement.parentNode.removeChild(mediaElement);
+    }
+};
+
+connection.onMediaError = function(e) {
+    if (e.message === 'Concurrent mic process limit.') {
+        if (DetectRTC.audioInputDevices.length <= 1) {
+            alert('Please select external microphone.');
+            return;
+        }
+
+        var secondaryMic = DetectRTC.audioInputDevices[1].deviceId;
+        connection.mediaConstraints.audio = {
+            deviceId: secondaryMic
+        };
+
+        connection.join(connection.sessionid, function(isRoomJoined, roomid, error) {
+          if(error) {
+            alert(error);
+          }
+        });
+    }
+};
+
+connection.onPeerStateChanged = function(event) {
+  if(event.iceConnectionState === 'connected' && event.signalingState === 'stable') {
+    if(connection.peers[event.userid].gettingStats === true) {
+      return;
+    }
+    connection.peers[event.userid].gettingStats = true; // do not duplicate
+
+    var peer = connection.peers[event.userid].peer;
+    var interval = 1000;
+
+    if(DetectRTC.browser.name === 'Firefox') {
+      getStats(peer, peer.getLocalStreams()[0].getTracks()[0], function(stats) {
+        onGettingWebRTCStats(stats, event.userid);
+      }, interval);
+    }
+    else {
+      getStats(peer, function(stats) {
+        onGettingWebRTCStats(stats, event.userid);
+      }, interval);
+    }
+  }
+};
+
+function onGettingWebRTCStats(stats, remoteUserId) {
+	if(!connection.peers[remoteUserId]) {
+		stats.nomore();
+	}
+
+	if(stats.connectionType.remote.candidateType.indexOf('relayed') !== -1) {
+		stats.connectionType.remote.candidateType = 'TURN';
+	}
+	else {
+		stats.connectionType.remote.candidateType = 'STUN';
+	}
+
+	if(stats.connectionType.local.candidateType.indexOf('relayed') !== -1) {
+		stats.connectionType.local.candidateType = 'TURN';
+	}
+	else {
+		stats.connectionType.local.candidateType = 'STUN';
+	}
+	
+	var statsData = 'UserID: ' + remoteUserId + '\n';
+	statsData += 'ICE(remoteIceType, localIceType): ' + stats.connectionType.remote.candidateType + ', ' + stats.connectionType.local.candidateType;
+	statsData += '\n';
+	statsData += 'ExternalIPAddress(remote, local): ' + stats.connectionType.remote.ipAddress + ', ' + stats.connectionType.local.ipAddress;
+	statsData += '\n';
+	statsData += 'Transport(remote, local): ' + stats.connectionType.remote.transport + ', ' + stats.connectionType.local.transport;
+	statsData += '\n';
+	
+	statsData += 'Encryption: ' + stats.encryption;
+	statsData += '\n';
+	statsData += 'videoResolutionsForSenders: ' + stats.resolutions.send.width + 'x' + stats.resolutions.send.height;
+	statsData += '\n';
+	statsData += 'videoResolutionsForReceivers: ' + stats.resolutions.recv.width + 'x' + stats.resolutions.recv.height;
+	statsData += '\n';
+	statsData += 'codecsSend: ' + stats.audio.send.codecs.concat(stats.video.send.codecs).join(', ');
+	statsData += '\n';
+	statsData += 'codecsRecv: ' + stats.audio.recv.codecs.concat(stats.video.recv.codecs).join(', ');
+	statsData += '\n';
+	statsData += 'totalDataForSenders(Audio + Video): ' + bytesToSize(stats.audio.bytesSent + stats.video.bytesSent);
+	statsData += '\n';
+	statsData += 'totalDataForReceivers(Audio + Video): ' + bytesToSize(stats.audio.bytesReceived + stats.video.bytesReceived);
+	statsData += '\n';
+	
+	statsData += 'Bandwidth: ' + bytesToSize(stats.bandwidth.speed);
+	statsData += '\n';
+	statsData += 'framerateMean: ' + bytesToSize(stats.video.send.framerateMean);
+	statsData += '\n';
+	statsData += 'bitrateMean: ' + bytesToSize(stats.video.send.bitrateMean);
+	statsData += '\n';
+	
+	statsData += 'audio-latency: ' + stats.audio.latency + 'ms';
+	statsData += '\n';
+	statsData += 'video-latency: ' + stats.video.latency + 'ms';
+	statsData += '\n';
+
+	statsData += 'audio-packetsLost: ' + stats.audio.packetsLost;
+	statsData += '\n';
+	statsData += 'video-packetsLost: ' + stats.video.packetsLost;
+	statsData += '\n';
+	
+	console.log('statsData = ' + statsData);
+}
+
+function bytesToSize(bytes) {
+    var k = 1000;
+    var sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    if (bytes === 0) {
+        return '0 Bytes';
+    }
+    var i = parseInt(Math.floor(Math.log(bytes) / Math.log(k)), 10);
+    return (bytes / Math.pow(k, i)).toPrecision(3) + ' ' + sizes[i];
+}
+
+function preferSelectedCodec(sdp) {
+	var info = splitLines(sdp);
+
+	if(codec.value === 'vp8' && info.vp8LineNumber === info.videoCodecNumbers[0]) {
+		return sdp;
+	}
+
+	if(codec.value === 'vp9' && info.vp9LineNumber === info.videoCodecNumbers[0]) {
+		return sdp;
+	}
+
+	if(codec.value === 'h264' && info.h264LineNumber === info.videoCodecNumbers[0]) {
+		return sdp;
+	}
+
+	sdp = preferCodec(sdp, codec.value, info);
+
+	return sdp;
+}
+
+function preferCodec(sdp, codec, info) {
+	var preferCodecNumber = '';
+
+	if(codec === 'vp8') {
+		if(!info.vp8LineNumber) {
+			return sdp;
+		}
+		preferCodecNumber = info.vp8LineNumber;
+	}
+	
+	if(codec === 'vp9') {
+		if(!info.vp9LineNumber) {
+			return sdp;
+		}
+		preferCodecNumber = info.vp9LineNumber;
+	}
+	
+	if(codec === 'h264') {
+		if(!info.h264LineNumber) {
+			return sdp;
+		}
+
+		preferCodecNumber = info.h264LineNumber;
+	}
+
+	var newLine = info.videoCodecNumbersOriginal.split('SAVPF')[0] + 'SAVPF ';
+
+	var newOrder = [preferCodecNumber];
+	info.videoCodecNumbers.forEach(function(codecNumber) {
+		if(codecNumber === preferCodecNumber) return;
+		newOrder.push(codecNumber);
+	});
+
+	newLine += newOrder.join(' ');
+
+	sdp = sdp.replace(info.videoCodecNumbersOriginal, newLine);
+	return sdp;
+}
+
+function splitLines(sdp) {
+	var info = {};
+	sdp.split('\n').forEach(function(line) {
+		if (line.indexOf('m=video') === 0) {
+			info.videoCodecNumbers = [];
+			line.split('SAVPF')[1].split(' ').forEach(function(codecNumber) {
+				codecNumber = codecNumber.trim();
+				if(!codecNumber || !codecNumber.length) return;
+				info.videoCodecNumbers.push(codecNumber);
+				info.videoCodecNumbersOriginal = line;
+			});
+		}
+
+		if (line.indexOf('VP8/90000') !== -1 && !info.vp8LineNumber) {
+			info.vp8LineNumber = line.replace('a=rtpmap:', '').split(' ')[0];
+		}
+
+		if (line.indexOf('VP9/90000') !== -1 && !info.vp9LineNumber) {
+			info.vp9LineNumber = line.replace('a=rtpmap:', '').split(' ')[0];
+		}
+
+		if (line.indexOf('H264/90000') !== -1 && !info.h264LineNumber) {
+			info.h264LineNumber = line.replace('a=rtpmap:', '').split(' ')[0];
+		}
+	});
+
+	return info;
+}
+				
+var joinCalleeUsingHisUsername = document.getElementById('join-callee-using-his-username');
+joinCalleeUsingHisUsername.onclick = function() {
+    this.disabled = true;
+    connection.checkPresence(calleeUserName.value, function(isOnline, username) {
+        if(!isOnline) {
+            joinCalleeUsingHisUsername.disabled = false;
+            alert(username + '没有在线！');
+            return;
+        }
+
+        connection.join(username, function(isRoomJoined, roomid, error) {
+          if(error) {
+            alert(error);
+          }
+        });
+    });
+
+    setTimeout(function() {
+        joinCalleeUsingHisUsername.disabled = false;
+    }, 1000);
+};
+
+var currentUserName = document.getElementById('current-username');
+currentUserName.onkeyup = currentUserName.onpaste = currentUserName.oninput = function() {
+    localStorage.setItem(this.id, this.value);
+};
+currentUserName.value = localStorage.getItem(currentUserName.id) || connection.token();
+
+document.getElementById('change-your-own-username').onclick = function() {
+    this.disabled = true;
+    connection.open(currentUserName.value, function(isRoomOpened, roomid, error) {
+      if(error) {
+        alert(error);
+      }
+
+      joinCalleeUsingHisUsername.disabled = false;
+    });
+};
+
+var calleeUserName = document.getElementById('callee-username');
+calleeUserName.onkeyup = calleeUserName.onpaste = calleeUserName.oninput = function() {
+    localStorage.setItem(this.id, this.value);
+};
+calleeUserName.value = localStorage.getItem(calleeUserName.id) || connection.token();
+
+</script>
+
+</body>
+</html>
